@@ -44,6 +44,11 @@ class TestSemanticVersion(base.BaseTestCase):
             "1.2.4",
             "1.3.3",
             "2.2.3",
+            "2.2.3+1",
+            "2.2.3.post1",
+            "2.2.3.post1+1",
+            "2.2.3.post1+1.a",
+            "2.2.3.post1+1.2",
         ]
         for v in ordered_versions:
             sv = version.SemanticVersion.from_pip_string(v)
@@ -121,6 +126,14 @@ class TestSemanticVersion(base.BaseTestCase):
     def test_from_pip_string_non_digit_start(self):
         self.assertRaises(ValueError, from_pip_string,
                           'non-release-tag/2014.12.16-1')
+
+    def test_from_pip_string_local_portion(self):
+        expected = version.SemanticVersion(2, 2, 3, local_string='123')
+        self.assertEqual(expected, from_pip_string('2.2.3+123'))
+
+    def test_from_pip_string_local_portion_complex(self):
+        expected = version.SemanticVersion(2, 2, 3, local_string='123.debian.3')
+        self.assertEqual(expected, from_pip_string('2.2.3+123.debian.3'))
 
     def test_final_version(self):
         semver = version.SemanticVersion(1, 2, 3)
@@ -226,6 +239,14 @@ class TestSemanticVersion(base.BaseTestCase):
         self.assertEqual("1.2.4.0b1", semver.release_string())
         self.assertEqual("1.2.3.b1", semver.rpm_string())
         self.assertEqual(semver, from_pip_string("1.2.4.0b1"))
+
+    def test_local_version(self):
+        semver = version.SemanticVersion(1, 2, 4, 'b', 1, local_string='123.el7.1')
+        self.assertEqual((1, 2, 4, 'beta', 1, '123.el7.1'), semver.version_tuple())
+        self.assertEqual("1.2.4~b1+123.el7.1", semver.debian_string())
+        self.assertEqual("1.2.4.0b1+123.el7.1", semver.release_string())
+        self.assertEqual("1.2.3.b1+123.el7.1", semver.rpm_string())
+        self.assertEqual(semver, from_pip_string('1.2.4.0b1+123.el7.1'))
 
     def test_decrement_nonrelease(self):
         # The prior version of any non-release is a release

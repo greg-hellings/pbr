@@ -41,7 +41,7 @@ class SemanticVersion(object):
 
     def __init__(
             self, major, minor=0, patch=0, prerelease_type=None,
-            prerelease=None, dev_count=None):
+            prerelease=None, dev_count=None, local_string=None):
         """Create a SemanticVersion.
 
         :param major: Major component of the version.
@@ -52,12 +52,15 @@ class SemanticVersion(object):
         :param prerelease: For prerelease versions, what number prerelease.
             Defaults to 0.
         :param dev_count: How many commits since the last release.
+        :param local_string: String following + in version. See pep-440
+            "Local Version Identifiers" for description.
         """
         self._major = major
         self._minor = minor
         self._patch = patch
         self._prerelease_type = prerelease_type
         self._prerelease = prerelease
+        self._local_string = local_string
         if self._prerelease_type and not self._prerelease:
             self._prerelease = 0
         self._dev_count = dev_count or 0  # Normalise 0 to None.
@@ -101,7 +104,42 @@ class SemanticVersion(object):
         # if this ever becomes performance sensitive.
         if not isinstance(other, SemanticVersion):
             raise TypeError("ordering to non-SemanticVersion is undefined")
-        return self._sort_key() < other._sort_key()
+        my_key = self._sort_key()
+        other_key = other._sort_key()
+        # Resolved at the release portion of the string
+        if not my_key == other_key:
+            return my_key < other_key
+        # Compare local versions when public version is equal
+        # Trivial case where one side has a local string and the other doesn't
+        if other._local_string is None and self._local_string is not None:
+            return False
+        if other._local_string is not None and self._local_string is None:
+            return True
+        if other._local_string is None and self._local_string is None:
+            return False
+        # Test each portion individually, according to PEP-440. All-numeric
+        # segments should be treated as ints, anything else as a string, but
+        # ints should be considered GREATER than strings. Python interpreter
+        # feels that strings are greater than ints. So we need to do this
+        # the hard way
+        my_local_parts = self._local_string.split('.')
+        other_local_parts = other._local_string.split('.')
+        for idx in range(0, min(len(my_local_parts), len(other_local_parts))):
+            # First, check for int types
+            mine = my_local_parts[idx]
+            if _is_int(mine):
+                mine = int(mine)
+            theirs = other_local_parts[idx]
+            if _is_int(theirs):
+                theirs = int(theirs)
+            if isinstance(mine, int) and not isinstance(theirs, int):
+                return False
+            if not isinstance(mine, int) and isinstance(theirs, int):
+                return True
+            if mine != theirs:
+                return mine < theirs
+        # If the two are value-identical up to this point, then compare lengths
+        return len(my_local_parts) < len(other_local_parts)
 
     def __le__(self, other):
         return self == other or self < other
@@ -145,6 +183,13 @@ class SemanticVersion(object):
         # Versions need to start numerically, ignore if not
         if not version_string[:1].isdigit():
             raise ValueError("Invalid version %r" % version_string)
+        local_split = version_string.split('+')
+        local_string = None
+        if len(local_split) > 2:
+            raise ValueError('Cannot have more than one local segment')
+        if len(local_split) == 2:
+            local_string = local_split[1]
+            version_string = local_split[0]
         input_components = version_string.split('.')
         # decimals first (keep pre-release and dev/hashes to the right)
         components = [c for c in input_components if c.isdigit()]
@@ -216,13 +261,13 @@ class SemanticVersion(object):
                 remainder = remainder[1:]
         result = SemanticVersion(
             major, minor, patch, prerelease_type=prerelease_type,
-            prerelease=prerelease, dev_count=dev_count)
+            prerelease=prerelease, dev_count=dev_count, local_string=local_string)
         if post_count:
             if dev_count:
                 raise ValueError(
                     'Cannot combine postN and devN - no mapping in %r'
                     % (version_string,))
-            result = result.increment().to_dev(post_count)
+            result = result.increment().to_dev(post_count).to_local(local_string)
         return result
 
     def brief_string(self):
@@ -308,7 +353,7 @@ class SemanticVersion(object):
             new_major, new_minor, new_patch,
             new_prerelease_type, new_prerelease)
 
-    def _long_version(self, pre_separator, rc_marker=""):
+    def _long_version(self, pre_separator, rc_marker="", local_marker='+'):
         """Construct a long string version of this semver.
 
         :param pre_separator: What separator to use between components
@@ -333,6 +378,9 @@ class SemanticVersion(object):
                 segments.append('.')
             segments.append('dev')
             segments.append(self._dev_count)
+        if self._local_string is not None:
+            segments.append(local_marker)
+            segments.append(self._local_string)
         return "".join(str(s) for s in segments)
 
     def release_string(self):
@@ -360,6 +408,12 @@ class SemanticVersion(object):
         return SemanticVersion(
             self._major, self._minor, self._patch, self._prerelease_type,
             self._prerelease, dev_count=dev_count)
+
+    def to_local(self, local_string):
+        return SemanticVersion(
+            self._major, self._minor, self._patch, self._prerelease_type,
+            self._prerelease, self._dev_count, local_string=local_string
+        )
 
     def version_tuple(self):
         """Present the version as a version_info tuple.
@@ -395,6 +449,8 @@ class SemanticVersion(object):
         else:
             segments.append('final')
             segments.append(0)
+        if self._local_string is not None:
+            segments.append(self._local_string)
         return tuple(segments)
 
 
